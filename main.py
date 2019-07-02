@@ -467,22 +467,24 @@ with tf.Session(config=tf.ConfigProto(log_device_placement=True)) as sess:
     sess.run(tf.global_variables_initializer())
     for i in range(5000):
         lr = noam_learning_rate(i + 1, warm_up, d_model)
-        batch_in, batch_out = generate_data(batch_size, seq_length, vocab_size)
+        batch_seq_len = np.random.randint(3, 15)
+        batch_in, batch_out = generate_data(batch_size, batch_seq_len, vocab_size)
+        feed_outputs = batch_out[:, :-1]
+        feed_inputs = batch_in
+        feed_expected = batch_out[:, 1:]
         _, batch_loss, batch_res = sess.run(
             [train_op, loss, results],
             feed_dict={
                 learning_rate: lr,
-                inputs: batch_in,
-                outputs: batch_out[:, :-1],
-                expected: batch_out[:, 1:],
-                max_input_seq_len: batch_in.shape[-1]
+                inputs: feed_inputs,
+                outputs: feed_outputs,
+                expected: feed_expected,
+                max_input_seq_len: batch_seq_len
             }
         )
         if i % 500 == 0:
-            print("step={}\tloss={}".format(i, batch_loss))
-            print("inp={}".format(__print_seq(batch_in[0])))
-            print("out={}".format(__print_seq(batch_out[0])))
+            print("step={}: loss={}".format(i, batch_loss))
+            print("inp={}".format(__print_seq(feed_inputs[0])))
+            print("out={}".format(__print_seq(feed_outputs[0])))
             print("res={}".format(__print_seq(np.argmax(batch_res[0], -1))))
-
-
 
