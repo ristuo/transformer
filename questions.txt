@@ -1,6 +1,0 @@
-1. What is the meaning of batch_in_mask, being always constant ones and therefore not masking anything? 
-  - Mayhap it is for padding? That doesn't make any sense now does it?
-2. What happens when sequence length changes? 
-  - Within a minibatch it's not allowed to. Between minibatches there has to be maximum sequence length,
-    and then if in minibatch you have max len N, you do P[::,0:N] so that you will be allowed to multiply 
-    stuff.
