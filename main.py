@@ -371,6 +371,7 @@ heads = 8
 keep_prob = 0.9
 n_layers = 2  # 6
 d_ff = 256  # 2048
+batch_size = 32
 
 positional_encodings = generate_positional_encodings(d_model)
 
@@ -404,7 +405,7 @@ _, input_embeddings, output_embeddings = get_embeddings(
     vocab_size,
     d_model=d_model,
     max_input_seq_len=max_input_seq_len,
-    n_batches=n_batches
+    n_batches=batch_size
 )
 prepared_input_embeddings = prepare_embeddings(
     input_embeddings,
@@ -444,7 +445,7 @@ decoding = decoder(
     d_ff=d_ff,
     d_model=d_model,
     seq_len=max_input_seq_len,
-    n_batches=n_batches
+    n_batches=batch_size
 )
 log_results = generator(decoding, vocab_size=vocab_size)
 results = tf.exp(log_results)
