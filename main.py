@@ -1,3 +1,12 @@
+###############################################################################
+# based on http://blog.varunajayasiri.com/ml/transformer.html
+# the difference mainly is that instead of reading sequence length from
+# tensor dimensions, it's passed a separate placeholder tensor around allowing
+# sequence length to change from one minibatch to another. To that end some 
+# variables like masks are also implemented in tf instead of turning numpy
+# things to constant tensors.
+###############################################################################
+
 import math
 import numpy as np
 np.set_printoptions(linewidth=250)
