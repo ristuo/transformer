@@ -6,7 +6,7 @@
 # variables like masks are also implemented in tf instead of turning numpy
 # things to constant tensors.
 ###############################################################################
-
+from random import shuffle
 import math
 import numpy as np
 np.set_printoptions(linewidth=250)
@@ -77,7 +77,8 @@ def multi_head_attention(
     heads: int,
     keep_prob: float,
     d_model: int,
-    seq_len: tf.Tensor,
+    query_seq_len: tf.Tensor,
+    kv_seq_len: tf.Tensor,
     n_batches: int
 ):
     with tf.variable_scope("multi_head"):
@@ -86,7 +87,7 @@ def multi_head_attention(
             heads=heads, 
             name="query",
             d_model=d_model,
-            seq_len=seq_len,
+            seq_len=query_seq_len,
             n_batches=n_batches
         )
         key = prepare_for_multi_head_attention(
@@ -94,7 +95,7 @@ def multi_head_attention(
             heads, 
             "key",
             d_model=d_model,
-            seq_len=seq_len,
+            seq_len=kv_seq_len,
             n_batches=n_batches
         )
         value = prepare_for_multi_head_attention(
@@ -102,13 +103,13 @@ def multi_head_attention(
             heads, 
             "value",
             d_model=d_model,
-            seq_len=seq_len,
+            seq_len=kv_seq_len,
             n_batches=n_batches
         )
         mask = tf.expand_dims(mask, axis=1)
         out, _ = attention(query, key, value, mask=mask, keep_prob=keep_prob)
         out = tf.transpose(out, perm=[0, 2, 1, 3])
-        out = tf.reshape(out, shape=[n_batches, seq_len, d_model])
+        out = tf.reshape(out, shape=[n_batches, query_seq_len, d_model])
         return tf.layers.dense(out, units=d_model, name="attention")
 
 
@@ -145,7 +146,8 @@ def encoder_layer(x: tf.Tensor,
             heads=heads, 
             keep_prob=keep_prob,
             d_model=d_model,
-            seq_len=seq_len,
+            query_seq_len=seq_len,
+            kv_seq_len=seq_len,
             n_batches=n_batches
         )
         added = x + tf.nn.dropout(attention_out, keep_prob)
@@ -194,7 +196,8 @@ def decoder_layer(
     keep_prob: float, 
     d_ff: int,
     d_model: int,
-    seq_len: tf.Tensor,
+    x_seq_len: tf.Tensor,
+    y_seq_len: tf.Tensor,
     n_batches: int
 ):
     with tf.variable_scope("{}_self_attention".format(index)):
@@ -206,7 +209,8 @@ def decoder_layer(
             heads=heads, 
             keep_prob=keep_prob,
             d_model=d_model,
-            seq_len=seq_len,
+            query_seq_len=y_seq_len,
+            kv_seq_len=y_seq_len,
             n_batches=n_batches
         )
         added = x + tf.nn.dropout(attention_out, keep_prob=keep_prob)
@@ -221,11 +225,13 @@ def decoder_layer(
             heads=heads, 
             keep_prob=keep_prob,
             d_model=d_model,
-            seq_len=seq_len,
+            query_seq_len=y_seq_len,
+            kv_seq_len=x_seq_len,
             n_batches=n_batches
         )
         added = x + tf.nn.dropout(attention_out, keep_prob=keep_prob)
         x = layer_norm(added, d_model)
+
     with tf.variable_scope("{}_ff".format(index)):
         ff_out = feed_forward(x, d_model, d_ff, keep_prob)
         added = x + tf.nn.dropout(ff_out, keep_prob)
@@ -243,7 +249,8 @@ def decoder(
     keep_prob: float, 
     d_ff: int,
     d_model: int,
-    seq_len: tf.Tensor,
+    x_seq_len: tf.Tensor,
+    y_seq_len: tf.Tensor,
     n_batches: int
 ):
     with tf.variable_scope("decoder"):
@@ -258,7 +265,8 @@ def decoder(
                 keep_prob=keep_prob, 
                 d_ff=d_ff,
                 d_model=d_model,
-                seq_len=seq_len,
+                x_seq_len=x_seq_len,
+                y_seq_len=y_seq_len,
                 n_batches=n_batches
             )
         return x
@@ -270,6 +278,7 @@ def get_embeddings(
     vocab_size: int, 
     d_model: int,
     max_input_seq_len: tf.Tensor,
+    max_y_seq_len: tf.Tensor,
     n_batches: int
 ):
     word_embeddings = tf.get_variable(
@@ -281,7 +290,7 @@ def get_embeddings(
     in_emb = tf.nn.embedding_lookup(word_embeddings, input_ids)
     in_emb = tf.reshape(in_emb, [n_batches, max_input_seq_len, d_model])
     out_emb = tf.nn.embedding_lookup(word_embeddings, output_ids)
-    out_emb = tf.reshape(out_emb, [n_batches, max_input_seq_len, d_model])
+    out_emb = tf.reshape(out_emb, [n_batches, max_y_seq_len, d_model])
     return word_embeddings, in_emb, out_emb
 
 
@@ -338,26 +347,6 @@ def label_smoothing_loss(
     return tf.reduce_mean(tf.distributions.kl_divergence(results, expected))
 
 
-def generate_data(batch_size: int, seq_len: int, vocab_size: int):
-    start_token = vocab_size - 1
-    repeat_token = vocab_size - 2
-    vocab_size -= 2
-    inputs = np.random.randint(0, vocab_size, size=(batch_size, seq_len))
-    outputs = np.zeros((batch_size, seq_len + 1), dtype=int)
-    outputs[:, 1:] = np.flip(inputs, 1)
-    outputs[:, 0] = start_token
-    for i in range(batch_size):
-        v = np.zeros(vocab_size, dtype=bool)
-        for j in range(seq_len):
-            word = inputs[i, j]
-            if v[word]:
-                v[word] = False
-                outputs[i][seq_len - j] = repeat_token
-            else:
-                v[word] = True
-    return inputs, outputs
-
-
 def noam_learning_rate(step: int, warm_up: float, d_model: int):
     return (d_model ** -.5) * min(step ** -.5, step * warm_up ** -1.5)
 
@@ -369,17 +358,82 @@ def output_subsequent_mask(max_input_seq_len: tf.Tensor, name):
     )
     return tf.linalg.band_part(matrix_of_ones, -1,0)
 
-seq_length = 10
-vocab_size = 10 + 1 + 1
-vocab_str = [str(i) for i in range(10)]
-vocab_str += ['X', 'S']
 
-d_model = 512  # 512
+def product(xs):
+    res = 1
+    for x in xs:
+        res *= x
+    return res
+variables = tf.global_variables()
+parameters = sum([product(v.shape) for v in variables]).value
+
+def __print_seq(seq, index_to_char):
+    return ' '.join([index_to_char[i] for i in seq])
+
+
+
+def to_numeric(xs, char_to_index):
+    return [char_to_index[x] for x  in xs]
+
+
+def to_text(xs, index_to_char):
+    return [index_to_char[x] for x in xs]
+
+
+def make_records(texts, char_to_index, context_size=15):
+    res = []
+    for i in range(context_size, len(texts)):
+        x = to_numeric("\n".join(texts[(i - context_size): i]), char_to_index)
+        y = to_numeric(texts[i], char_to_index)
+        res += [(x,y)]
+    return res
+    
+
+def load_data():
+    with open("data/kalevala.txt", "rb") as fp:
+        text = fp.read().decode()
+    vocabulary = list(set(text)) + ["_", "$"]
+    char_to_index = dict(zip(vocabulary, range(len(vocabulary))))
+    index_to_char = {v:k for k,v in char_to_index.items()}
+    text = text.replace("\r","").split("\n")
+    text = [x.strip() for x in text if x != ""]
+    n_records = len(text)
+    cutoff = int(n_records * (1 - 0.05))
+    training = make_records(text[:cutoff], char_to_index)
+    test = make_records(text[cutoff:], char_to_index, context_size=5)
+    return training, test, char_to_index, index_to_char, char_to_index["_"], char_to_index["$"]
+
+
+def get_batch(training, i, batch_size, pad_number, start_number):
+    def pad_left(x, to_size, pad_number):
+        return [pad_number] * (to_size - len(x)) + x
+    def pad_right(x, to_size, pad_number):
+        return x + [pad_number] * (to_size - len(x)) 
+    j = (i * batch_size) % len(training)
+    end = j + batch_size
+    batch = training[j:end]
+    x_lengths = [len(x) for x,_ in batch]
+    y_lengths = [len(y) for _,y in batch]
+    batch_max_len_x = max(x_lengths)
+    batch_max_len_y = max(y_lengths)
+    padded = [
+        (
+            pad_left(x, batch_max_len_x, pad_number), 
+            pad_right(y, batch_max_len_y, pad_number)
+        )
+        for x,y in batch
+    ]
+    return [(x, [start_number] + y) for x,y in padded]
+
+
+
+warm_up = 400
+d_model = 128  # 512
 heads = 8
 keep_prob = 0.9
-n_layers = 6  # 6
-d_ff = 2048  # 2048
-batch_size = 256
+n_layers = 3  # 6
+d_ff = 256  # 2048
+batch_size = 16
 
 positional_encodings = generate_positional_encodings(d_model)
 
@@ -390,6 +444,10 @@ inputs = tf.placeholder(
 max_input_seq_len = tf.placeholder(
     dtype=tf.int32, 
     name="max_input_seq_len"
+)
+max_y_seq_len = tf.placeholder(
+    dtype=tf.int32, 
+    name="max_y_seq_len"
 )
 outputs = tf.placeholder(
     dtype=tf.int32,
@@ -404,8 +462,11 @@ inputs_mask = tf.ones(
     dtype=tf.float32, 
     name="input_mask"
 )
-output_mask = output_subsequent_mask(max_input_seq_len, "output_mask") 
+output_mask = output_subsequent_mask(max_y_seq_len, "output_mask") 
 learning_rate = tf.placeholder(dtype=tf.float32, name="learning_rate")
+training, test, char_to_index, index_to_char, pad_number, start_number = load_data()
+shuffle(training)
+vocab_size = len(index_to_char)
 
 _, input_embeddings, output_embeddings = get_embeddings(
     inputs, 
@@ -413,6 +474,7 @@ _, input_embeddings, output_embeddings = get_embeddings(
     vocab_size,
     d_model=d_model,
     max_input_seq_len=max_input_seq_len,
+    max_y_seq_len=max_y_seq_len,
     n_batches=batch_size
 )
 prepared_input_embeddings = prepare_embeddings(
@@ -428,7 +490,7 @@ prepared_output_embeddings = prepare_embeddings(
     positional_encodings=positional_encodings,
     keep_prob=keep_prob,    
     is_input=False,
-    seq_len=max_input_seq_len,
+    seq_len=max_y_seq_len,
     d_model=d_model
 )
 encoding = encoder(
@@ -452,11 +514,14 @@ decoding = decoder(
     keep_prob=keep_prob, 
     d_ff=d_ff,
     d_model=d_model,
-    seq_len=max_input_seq_len,
+    y_seq_len=max_y_seq_len,
+    x_seq_len=max_input_seq_len,
     n_batches=batch_size
 )
+
 log_results = generator(decoding, vocab_size=vocab_size)
 results = tf.exp(log_results)
+
 loss = label_smoothing_loss(
     log_results, 
     expected, 
@@ -468,26 +533,18 @@ params = tf.trainable_variables()
 grads, _ = tf.clip_by_global_norm(tf.gradients(loss, params), 5.)
 grads_and_vars = list(zip(grads, params))
 train_op = adam.apply_gradients(grads_and_vars, name="apply_gradients")
-warm_up = 400
-
-def product(xs):
-    res = 1
-    for x in xs:
-        res *= x
-    return res
-variables = tf.global_variables()
-parameters = sum([product(v.shape) for v in variables]).value
-
-def __print_seq(seq):
-    return ' '.join([vocab_str[i] for i in seq])
-
 
 with tf.Session(config=tf.ConfigProto(log_device_placement=True)) as sess:
     sess.run(tf.global_variables_initializer())
-    for i in range(5000):
+    for i in range(10000):
         lr = noam_learning_rate(i + 1, warm_up, d_model)
-        batch_seq_len = np.random.randint(3, 15)
-        batch_in, batch_out = generate_data(batch_size, batch_seq_len, vocab_size)
+        batch = get_batch(training, i, batch_size, pad_number, start_number)
+        if len(batch) != batch_size:
+            continue
+        batch_seq_len = len(batch[0][0])
+        batch_y_seq_len = len(batch[0][1]) - 1
+        batch_in = np.array([b[0] for b in batch])
+        batch_out = np.array([b[1] for b in batch])
         feed_outputs = batch_out[:, :-1]
         feed_inputs = batch_in
         feed_expected = batch_out[:, 1:]
@@ -498,12 +555,34 @@ with tf.Session(config=tf.ConfigProto(log_device_placement=True)) as sess:
                 inputs: feed_inputs,
                 outputs: feed_outputs,
                 expected: feed_expected,
-                max_input_seq_len: batch_seq_len
+                max_input_seq_len: batch_seq_len,
+                max_y_seq_len: batch_y_seq_len
             }
         )
-        if i % 500 == 0:
-            print("step={}: loss={}".format(i, batch_loss))
-            print("inp={}".format(__print_seq(feed_inputs[0])))
-            print("out={}".format(__print_seq(feed_outputs[0])))
-            print("res={}".format(__print_seq(np.argmax(batch_res[0], -1))))
 
+        if i % 50 == 0:
+            test_batch = get_batch(test, 0, batch_size, pad_number, start_number)
+            test_batch_in = np.array([b[0] for b in test_batch])
+            test_batch_out = np.array([b[1] for b in test_batch])
+            test_feed_outputs = test_batch_out[:, :-1]
+            test_feed_inputs = test_batch_in
+            test_example = sess.run(
+                results,
+                feed_dict={
+                    learning_rate: lr,
+                    inputs: test_feed_inputs,
+                    outputs: test_feed_outputs,
+                    max_input_seq_len: len(test_batch[0][0]),
+                    max_y_seq_len: len(test_batch[0][1]) - 1 
+                }
+            )
+            print("step={}: loss={}".format(i, batch_loss))
+            print("inp={}".format(__print_seq(feed_inputs[0], index_to_char)))
+            print("out={}".format(__print_seq(feed_outputs[0], index_to_char)))
+            print("exp={}".format(__print_seq(feed_expected[0], index_to_char)))
+            print("res={}".format(__print_seq(np.argmax(batch_res[0], -1), index_to_char)))
+            print("tst={}".format(__print_seq(test_feed_outputs[0], index_to_char)))
+            print("tre={}".format(__print_seq(np.argmax(test_example[0], -1), index_to_char)))
+# todo: 
+#   - tensorboard monitoring
+#   - computing actual validation loss          
