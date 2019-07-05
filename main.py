@@ -374,13 +374,12 @@ vocab_size = 10 + 1 + 1
 vocab_str = [str(i) for i in range(10)]
 vocab_str += ['X', 'S']
 
-batch_size = 32  # 12000
-d_model = 128  # 512
+d_model = 512  # 512
 heads = 8
 keep_prob = 0.9
-n_layers = 2  # 6
-d_ff = 256  # 2048
-batch_size = 32
+n_layers = 6  # 6
+d_ff = 2048  # 2048
+batch_size = 256
 
 positional_encodings = generate_positional_encodings(d_model)
 
@@ -470,8 +469,18 @@ grads, _ = tf.clip_by_global_norm(tf.gradients(loss, params), 5.)
 grads_and_vars = list(zip(grads, params))
 train_op = adam.apply_gradients(grads_and_vars, name="apply_gradients")
 warm_up = 400
+
+def product(xs):
+    res = 1
+    for x in xs:
+        res *= x
+    return res
+variables = tf.global_variables()
+parameters = sum([product(v.shape) for v in variables]).value
+
 def __print_seq(seq):
     return ' '.join([vocab_str[i] for i in seq])
+
 
 with tf.Session(config=tf.ConfigProto(log_device_placement=True)) as sess:
     sess.run(tf.global_variables_initializer())
